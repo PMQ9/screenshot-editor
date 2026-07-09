@@ -1,6 +1,11 @@
 APP := dist/Screenshot Editor.app
 
-.PHONY: app run run-fg release test clean
+.PHONY: app run run-fg release test clean icons
+
+# Regenerate the app identity (Resources/AppIcon.icns + Resources/MenuBarIcon.pdf).
+# The generated assets are checked in, so this only needs re-running when the design changes.
+icons:
+	swift scripts/make-icons.swift
 
 app:
 	scripts/bundle.sh debug

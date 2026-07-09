@@ -47,14 +47,22 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         AppSettings.shared.autoPopEnabled.toggle()
     }
 
-    /// Brief "nothing to edit" affordance when the hotkey fires on an empty clipboard.
+    private static let normalIcon = NSImage(
+        systemSymbolName: "photo.badge.plus",
+        accessibilityDescription: "Screenshot Editor")
+    private var hintRestore: DispatchWorkItem?
+
+    /// Brief "nothing to edit" affordance when the hotkey fires on an empty
+    /// clipboard. Restores to a constant icon so re-entry can't stick the warning.
     func flashNoImageHint() {
         guard let button = statusItem.button else { return }
-        let original = button.image
+        hintRestore?.cancel()
         button.image = NSImage(systemSymbolName: "exclamationmark.triangle",
                                accessibilityDescription: "No image on clipboard")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            button.image = original
+        let restore = DispatchWorkItem { [weak self] in
+            self?.statusItem.button?.image = Self.normalIcon
         }
+        hintRestore = restore
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: restore)
     }
 }

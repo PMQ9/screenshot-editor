@@ -105,8 +105,33 @@ enum Interaction: Equatable {
         preGestureSnapshot = nil
     }
 
+    /// Abort any in-flight pointer gesture, restoring the pre-gesture state.
+    /// Returns true if something was in flight (the caller should stop there:
+    /// the first ⌘Z aborts the gesture, the next one pops history).
+    private func abortInFlightGesture() -> Bool {
+        switch interaction {
+        case .drawing, .croppingDrag:
+            interaction = .idle
+            return true
+        case .draggingAnnotation, .resizing:
+            if let snapshot = preGestureSnapshot {
+                document = snapshot
+            }
+            preGestureSnapshot = nil
+            interaction = .idle
+            return true
+        case .idle, .editingText, .croppingDraft:
+            return false
+        }
+    }
+
     func undo() {
-        if case .editingText = interaction { cancelTextEdit() }
+        if case .editingText = interaction {
+            // ⌘Z mid-edit cancels the edit only; history stays intact.
+            cancelTextEdit()
+            return
+        }
+        if abortInFlightGesture() { return }
         guard let previous = undoStack.popLast() else { return }
         redoStack.append(document)
         document = previous
@@ -114,7 +139,8 @@ enum Interaction: Equatable {
     }
 
     func redo() {
-        if case .editingText = interaction { commitTextEdit() }
+        if case .editingText = interaction { return }
+        if abortInFlightGesture() { return }
         guard let next = redoStack.popLast() else { return }
         undoStack.append(document)
         document = next
@@ -311,6 +337,8 @@ enum Interaction: Equatable {
     }
 
     private func isCommittable(_ draft: Annotation, anchor: CGPoint, end: CGPoint) -> Bool {
+        // Fully outside the image: invisible in export, so don't commit.
+        guard draft.bounds.intersects(document.base.pixelRect) else { return false }
         switch draft.kind {
         case .rectangle(let r), .ellipse(let r), .blur(let r, _):
             return hypot(r.width, r.height) >= 4
@@ -335,14 +363,27 @@ enum Interaction: Equatable {
 
     private func applyStyleToSelection() {
         guard let id = selectedID, let index = document.index(of: id) else { return }
+        if case .editingText(let editingID) = interaction {
+            // Mid-edit style change: the edit's own gesture snapshot covers it;
+            // taking another would clobber that snapshot and leak a ghost
+            // annotation on cancel.
+            guard editingID == id else { return }
+            applyCurrentStyle(at: index)
+            return
+        }
+        guard case .idle = interaction else { return }
         beginGesture()
+        applyCurrentStyle(at: index)
+        endGesture()
+    }
+
+    private func applyCurrentStyle(at index: Int) {
         document.annotations[index].style.color = strokeColor
         document.annotations[index].style.strokeWidthPx = strokeWidthPx
         if case .text(var payload) = document.annotations[index].kind {
             payload.fontSizePx = fontSizePt * pixelsPerPoint
             document.annotations[index].kind = .text(payload)
         }
-        endGesture()
     }
 
     func deleteSelection() {
@@ -350,6 +391,9 @@ enum Interaction: Equatable {
             cancelTextEdit()
             return
         }
+        // During a drag/resize the snapshot slot is occupied; mutating history
+        // here would corrupt it.
+        guard case .idle = interaction else { return }
         guard let id = selectedID, let index = document.index(of: id) else { return }
         beginGesture()
         document.annotations.remove(at: index)
@@ -359,6 +403,7 @@ enum Interaction: Equatable {
     }
 
     func nudgeSelection(dx: CGFloat, dy: CGFloat) {
+        guard case .idle = interaction else { return }
         guard let id = selectedID, let index = document.index(of: id) else { return }
         beginGesture()
         document.annotations[index].translate(

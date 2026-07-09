@@ -20,7 +20,9 @@ import Carbon.HIToolbox
         let keyCode = defaults.object(forKey: "hotkeyKeyCode") as? Int ?? kVK_ANSI_E
         let modifiers = defaults.object(forKey: "hotkeyModifiers") as? Int
             ?? (cmdKey | shiftKey)
-        register(keyCode: UInt32(keyCode), modifiers: UInt32(modifiers))
+        // exactly: guards against out-of-range defaults crashing at launch.
+        register(keyCode: UInt32(exactly: keyCode) ?? UInt32(kVK_ANSI_E),
+                 modifiers: UInt32(exactly: modifiers) ?? UInt32(cmdKey | shiftKey))
     }
 
     func register(keyCode: UInt32, modifiers: UInt32) {

@@ -60,11 +60,14 @@ final class EditorWindowController: NSWindowController, NSMenuItemValidation {
         ImageExporter.save(viewModel, in: window)
     }
 
-    @objc func undo(_ sender: Any?) {
+    // Custom selectors: NSWindow itself responds to the standard undo:/redo:
+    // (with its own empty NSUndoManager) ahead of this controller in the
+    // responder chain, which would make Cmd+Z dead.
+    @objc func performUndo(_ sender: Any?) {
         viewModel.undo()
     }
 
-    @objc func redo(_ sender: Any?) {
+    @objc func performRedo(_ sender: Any?) {
         viewModel.redo()
     }
 
@@ -82,12 +85,12 @@ final class EditorWindowController: NSWindowController, NSMenuItemValidation {
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
-        case #selector(undo(_:)):
+        case #selector(performUndo(_:)):
             return viewModel.canUndo
-        case #selector(redo(_:)):
+        case #selector(performRedo(_:)):
             return viewModel.canRedo
         case #selector(paste(_:)):
-            return PasteboardReader.hasImage()
+            return PasteboardReader.canReadImage()
         case #selector(delete(_:)):
             return viewModel.selectedID != nil
         default:

@@ -29,8 +29,22 @@ extension BaseImage {
 /// Content reads happen ONLY on explicit user actions (hotkey, menu click,
 /// Cmd+V) or the auto-pop open — never from the background poller.
 enum PasteboardReader {
+    /// Narrow screenshot check (png/tiff) — used by the auto-pop monitor so
+    /// copying image *files* in Finder doesn't pop the editor.
     static func hasImage(_ pasteboard: NSPasteboard = .general) -> Bool {
         pasteboard.availableType(from: [.png, .tiff]) != nil
+    }
+
+    /// Broad check mirroring everything readImage can open — used to validate ⌘V.
+    static func canReadImage(_ pasteboard: NSPasteboard = .general) -> Bool {
+        if hasImage(pasteboard) { return true }
+        if pasteboard.canReadObject(forClasses: [NSImage.self], options: nil) {
+            return true
+        }
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingContentsConformToTypes: [UTType.image.identifier]
+        ]
+        return pasteboard.canReadObject(forClasses: [NSURL.self], options: options)
     }
 
     static func readImage(from pasteboard: NSPasteboard = .general) -> BaseImage? {

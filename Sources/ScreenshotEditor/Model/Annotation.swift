@@ -196,13 +196,21 @@ extension CGRect {
         return !inner.contains(p)
     }
 
-    /// True if `p` lies within `band` of the ellipse border inscribed in this rect.
+    /// True if `p` lies within `band` of the ellipse border inscribed in this
+    /// rect, using the first-order distance approximation |f| / |∇f| for
+    /// f = (dx/a)² + (dy/b)² − 1. (Scaling the ring deviation by min(a,b)
+    /// balloons the hit zone along the major axis of eccentric ellipses.)
     func ellipseBorderContains(_ p: CGPoint, band: CGFloat) -> Bool {
         let a = width / 2, b = height / 2
-        guard a > 0, b > 0 else { return false }
-        let dx = (p.x - midX) / a, dy = (p.y - midY) / b
-        let t = (dx * dx + dy * dy).squareRoot()   // 1.0 exactly on the border
-        return abs(t - 1) * Swift.min(a, b) <= band
+        guard a > 0.5, b > 0.5 else {
+            // Degenerate (hairline) ellipse renders as a line: hit like a rect border.
+            return borderBandContains(p, band: band)
+        }
+        let dx = p.x - midX, dy = p.y - midY
+        let f = (dx * dx) / (a * a) + (dy * dy) / (b * b) - 1
+        let gradient = hypot(2 * dx / (a * a), 2 * dy / (b * b))
+        guard gradient > 0 else { return band >= Swift.min(a, b) }   // exact center
+        return abs(f) / gradient <= band
     }
 
     func movingCorner(_ handle: Handle, to p: CGPoint) -> CGRect {

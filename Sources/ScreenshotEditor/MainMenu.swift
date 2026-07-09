@@ -39,8 +39,14 @@ import AppKit
         // Edit — standard selectors go through the responder chain; the editor
         // window controller implements copy/paste/undo/redo/delete.
         let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        // Custom selectors: NSWindow's built-in undo:/redo: would otherwise
+        // swallow Cmd+Z before it reaches EditorWindowController.
+        editMenu.addItem(withTitle: "Undo",
+                         action: #selector(EditorWindowController.performUndo(_:)),
+                         keyEquivalent: "z")
+        let redo = NSMenuItem(title: "Redo",
+                              action: #selector(EditorWindowController.performRedo(_:)),
+                              keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(redo)
         editMenu.addItem(.separator())

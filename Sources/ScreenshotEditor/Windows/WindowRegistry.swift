@@ -25,7 +25,9 @@ import AppKit
         NotificationCenter.default.removeObserver(
             self, name: NSWindow.willCloseNotification, object: window)
         controllers.removeAll { $0.window === window }
-        if controllers.isEmpty {
+        // Keep the menu bar while the Settings window is still up.
+        if controllers.isEmpty,
+           SettingsWindowController.shared.window?.isVisible != true {
             NSApp.setActivationPolicy(.accessory)
         }
     }

@@ -78,11 +78,12 @@ struct ToolbarView: View {
                     return NSItemProvider()
                 }
 
+            // No .keyboardShortcut here: ⌘C routes through the Edit menu and
+            // responder chain, so copy still works inside the text editor.
             Button("Copy") {
                 ImageExporter.copyToClipboard(viewModel)
             }
             .help("Copy the annotated image to the clipboard (⌘C)")
-            .keyboardShortcut("c", modifiers: .command)
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 12)

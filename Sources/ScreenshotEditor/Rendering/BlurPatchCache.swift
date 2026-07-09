@@ -49,7 +49,13 @@ final class BlurPatchCache {
             output = (filter.outputImage ?? input).cropped(to: ciRect)
         }
 
-        guard let image = ciContext.createCGImage(output, from: ciRect) else { return nil }
+        // Keep the base image's color space (screenshots are often Display P3);
+        // the default sRGB output would gamut-clamp and seam at patch edges.
+        let colorSpace = base.cgImage.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
+            ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        guard let image = ciContext.createCGImage(output, from: ciRect,
+                                                  format: .RGBA8,
+                                                  colorSpace: colorSpace) else { return nil }
         patches[annotation.id] = (key, image)
         return (image, rect)
     }

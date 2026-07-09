@@ -50,6 +50,9 @@ enum ImageExporter {
 
     static func defaultFileName() -> String {
         let formatter = DateFormatter()
+        // Fixed-format dates need the POSIX locale or user calendar/12-hour
+        // settings mangle the filename.
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
         return "Annotated \(formatter.string(from: Date())).png"
     }

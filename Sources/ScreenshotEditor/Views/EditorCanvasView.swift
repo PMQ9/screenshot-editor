@@ -8,6 +8,7 @@ struct EditorCanvasView: View {
     @Bindable var viewModel: EditorViewModel
 
     @State private var dragActive = false
+    @State private var dragMoved = false
     @FocusState private var canvasFocused: Bool
     @FocusState private var textFieldFocused: Bool
 
@@ -45,6 +46,9 @@ struct EditorCanvasView: View {
                     cg.saveGState()
                     cg.translateBy(x: transform.offset.x, y: transform.offset.y)
                     cg.scaleBy(x: transform.scale, y: transform.scale)
+                    // Export clips at the bitmap bounds; clip the screen the
+                    // same way so overhanging ink can't silently diverge.
+                    cg.clip(to: document.base.pixelRect)
                     cg.interpolationQuality = .high
                     AnnotationRenderer.draw(document, into: cg,
                                             blurCache: viewModel.blurCache,
@@ -74,7 +78,7 @@ struct EditorCanvasView: View {
         }
         .focusable()
         .focused($canvasFocused)
-        .onKeyPress(phases: .down) { press in
+        .onKeyPress(phases: [.down, .repeat]) { press in
             handleKey(press)
         }
         .onAppear { canvasFocused = true }
@@ -92,12 +96,20 @@ struct EditorCanvasView: View {
             .onChanged { value in
                 if !dragActive {
                     dragActive = true
+                    dragMoved = false
                     viewModel.pointerDown(
                         at: transform.toImage(value.startLocation),
                         tolerance: transform.imageTolerance(viewPoints: 6),
                         handleTolerance: transform.imageTolerance(viewPoints: 8))
                 }
-                viewModel.pointerDragged(to: transform.toImage(value.location))
+                // 2-pt slop so a jittery click doesn't become a real move
+                // (and a junk undo entry).
+                let travel = hypot(value.location.x - value.startLocation.x,
+                                   value.location.y - value.startLocation.y)
+                if dragMoved || travel > 2 {
+                    dragMoved = true
+                    viewModel.pointerDragged(to: transform.toImage(value.location))
+                }
             }
             .onEnded { value in
                 dragActive = false

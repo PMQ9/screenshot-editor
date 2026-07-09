@@ -18,10 +18,14 @@ final class EditorWindowController: NSWindowController, NSMenuItemValidation {
         window.tabbingMode = .disallowed
         super.init(window: window)
 
-        window.contentView = NSHostingView(rootView: EditorRootView(viewModel: viewModel))
+        let hosting = NSHostingView(rootView: EditorRootView(viewModel: viewModel))
+        // Drive the window's minimum size from the SwiftUI content, so it can
+        // never be resized narrower than the toolbar's most-collapsed layout
+        // (see ToolbarView's ViewThatFits) or shorter than the canvas floor.
+        hosting.sizingOptions = [.minSize]
+        window.contentView = hosting
         window.setContentSize(Self.initialContentSize(for: document))
         window.center()
-        window.contentMinSize = CGSize(width: 480, height: 320)
     }
 
     @available(*, unavailable)

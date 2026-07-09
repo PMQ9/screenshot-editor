@@ -120,6 +120,14 @@ struct EditorCanvasView: View {
     // MARK: - Keyboard
 
     private func handleKey(_ press: KeyPress) -> KeyPress.Result {
+        // While a text annotation is being edited, the overlaid TextField owns
+        // the keyboard: character input, caret movement (arrows), Backspace,
+        // Return (its .onSubmit commits) and Escape (its .onExitCommand
+        // cancels). The canvas must not intercept tool-letter shortcuts or
+        // navigation keys here, or those letters never reach the field.
+        if viewModel.editingTextID != nil {
+            return .ignored
+        }
         switch press.key {
         case .escape:
             return viewModel.handleEscape() ? .handled : .ignored

@@ -10,9 +10,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                  action: #selector(toggleAutoPop(_:)), keyEquivalent: "")
         super.init()
 
-        statusItem.button?.image = NSImage(
-            systemSymbolName: "photo.badge.plus",
-            accessibilityDescription: "Screenshot Editor")
+        statusItem.button?.image = Self.normalIcon
         statusItem.menu = buildMenu()
     }
 
@@ -47,9 +45,22 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         AppSettings.shared.autoPopEnabled.toggle()
     }
 
-    private static let normalIcon = NSImage(
-        systemSymbolName: "photo.badge.plus",
-        accessibilityDescription: "Screenshot Editor")
+    /// The menu-bar glyph: the custom "Focus" brackets template (a vector PDF that AppKit
+    /// auto-tints for light/dark menu bars). Falls back to an SF Symbol if the bundled asset
+    /// is ever missing (e.g. running the raw binary outside the assembled .app bundle).
+    private static func makeStatusIcon() -> NSImage? {
+        if let url = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "pdf"),
+           let image = NSImage(contentsOf: url) {
+            image.isTemplate = true
+            image.size = NSSize(width: 18, height: 18)
+            image.accessibilityDescription = "Screenshot Editor"
+            return image
+        }
+        return NSImage(systemSymbolName: "photo.badge.plus",
+                       accessibilityDescription: "Screenshot Editor")
+    }
+
+    private static let normalIcon = makeStatusIcon()
     private var hintRestore: DispatchWorkItem?
 
     /// Brief "nothing to edit" affordance when the hotkey fires on an empty

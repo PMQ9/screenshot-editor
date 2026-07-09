@@ -166,15 +166,37 @@ struct EditorCanvasView: View {
                             transform: CanvasTransform, selected: Annotation?,
                             editingID: UUID?, cropRect: CGRect?) {
         if let selected, selected.id != editingID {
-            let bounds = transform.toView(selected.bounds).insetBy(dx: -3, dy: -3)
-            context.stroke(Path(bounds), with: .color(.white.opacity(0.9)),
+            // Selection outline through the shape's (possibly rotated) corners.
+            let corners = selected.outlineCorners.map { transform.toView($0) }
+            var outline = Path()
+            if corners.count == 4 {
+                outline.move(to: corners[0])
+                for c in corners.dropFirst() { outline.addLine(to: c) }
+                outline.closeSubpath()
+            }
+            context.stroke(outline, with: .color(.white.opacity(0.9)),
                            style: StrokeStyle(lineWidth: 3))
-            context.stroke(Path(bounds), with: .color(.accentColor),
+            context.stroke(outline, with: .color(.accentColor),
                            style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-            for (_, position) in selected.handles {
+
+            let handles = selected.handles
+            // Stalk from the top edge to the rotate handle.
+            if corners.count == 4,
+               let rotate = handles.first(where: { $0.handle == .rotate }) {
+                let topMid = CGPoint(x: (corners[0].x + corners[1].x) / 2,
+                                     y: (corners[0].y + corners[1].y) / 2)
+                var stalk = Path()
+                stalk.move(to: topMid)
+                stalk.addLine(to: transform.toView(rotate.position))
+                context.stroke(stalk, with: .color(.accentColor),
+                               style: StrokeStyle(lineWidth: 1.5))
+            }
+            for (handle, position) in handles {
                 let p = transform.toView(position)
+                let isRotate = handle == .rotate
                 let handleRect = CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)
-                context.fill(Path(ellipseIn: handleRect), with: .color(.white))
+                context.fill(Path(ellipseIn: handleRect),
+                             with: .color(isRotate ? .accentColor : .white))
                 context.stroke(Path(ellipseIn: handleRect), with: .color(.accentColor),
                                style: StrokeStyle(lineWidth: 1.5))
             }
@@ -209,6 +231,7 @@ struct EditorCanvasView: View {
                 .background(Color.black.opacity(0.2))
                 .fixedSize()
                 .frame(minWidth: 40, alignment: .topLeading)
+                .rotationEffect(.radians(Double(annotation.rotation)), anchor: .topLeading)
                 .offset(x: position.x, y: position.y)
                 .focused($textFieldFocused)
                 .onSubmit { viewModel.commitTextEdit() }

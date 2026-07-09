@@ -19,7 +19,20 @@ enum AnnotationRenderer {
             if let cache = blurCache,
                let patch = cache.patch(for: annotation, base: document.base,
                                        cropGeneration: document.cropGeneration) {
-                ctx.drawImageYDown(patch.image, in: patch.rect)
+                if annotation.rotation != 0 {
+                    // Patch pixels are the unrotated footprint (redaction is
+                    // destructive + blurred, so source orientation is invisible);
+                    // rotate the blit so the covered region matches the shape.
+                    let c = annotation.rotationCenter
+                    ctx.saveGState()
+                    ctx.translateBy(x: c.x, y: c.y)
+                    ctx.rotate(by: annotation.rotation)
+                    ctx.translateBy(x: -c.x, y: -c.y)
+                    ctx.drawImageYDown(patch.image, in: patch.rect)
+                    ctx.restoreGState()
+                } else {
+                    ctx.drawImageYDown(patch.image, in: patch.rect)
+                }
             }
         }
 
@@ -30,26 +43,61 @@ enum AnnotationRenderer {
     }
 
     static func draw(_ annotation: Annotation, into ctx: CGContext) {
+        guard annotation.isRotatable, annotation.rotation != 0 else {
+            drawUnrotated(annotation, into: ctx)
+            return
+        }
+        let c = annotation.rotationCenter
+        ctx.saveGState()
+        ctx.translateBy(x: c.x, y: c.y)
+        ctx.rotate(by: annotation.rotation)
+        ctx.translateBy(x: -c.x, y: -c.y)
+        drawUnrotated(annotation, into: ctx)
+        ctx.restoreGState()
+    }
+
+    private static func drawUnrotated(_ annotation: Annotation, into ctx: CGContext) {
         let style = annotation.style
         switch annotation.kind {
         case .rectangle(let rect):
             ctx.saveGState()
-            ctx.setStrokeColor(style.color.cgColor)
-            ctx.setLineWidth(style.strokeWidthPx)
-            ctx.setLineJoin(.round)
-            ctx.stroke(rect)
+            let path: CGPath = style.cornerRadiusPx > 0
+                ? CGPath(roundedRect: rect.standardized,
+                         cornerWidth: min(style.cornerRadiusPx, rect.width / 2),
+                         cornerHeight: min(style.cornerRadiusPx, rect.height / 2),
+                         transform: nil)
+                : CGPath(rect: rect, transform: nil)
+            if style.filled {
+                ctx.setFillColor(style.fillColor.cgColor)
+                ctx.addPath(path)
+                ctx.fillPath()
+            }
+            if style.strokeWidthPx > 0 {
+                ctx.setStrokeColor(style.color.cgColor)
+                ctx.setLineWidth(style.strokeWidthPx)
+                ctx.setLineJoin(.round)
+                ctx.addPath(path)
+                ctx.strokePath()
+            }
             ctx.restoreGState()
 
         case .ellipse(let rect):
             ctx.saveGState()
-            ctx.setStrokeColor(style.color.cgColor)
-            ctx.setLineWidth(style.strokeWidthPx)
-            ctx.strokeEllipse(in: rect)
+            if style.filled {
+                ctx.setFillColor(style.fillColor.cgColor)
+                ctx.fillEllipse(in: rect)
+            }
+            if style.strokeWidthPx > 0 {
+                ctx.setStrokeColor(style.color.cgColor)
+                ctx.setLineWidth(style.strokeWidthPx)
+                ctx.strokeEllipse(in: rect)
+            }
             ctx.restoreGState()
 
         case .arrow(let start, let end):
             let geometry = ArrowGeometry(start: start, end: end,
-                                         strokeWidthPx: style.strokeWidthPx)
+                                         strokeWidthPx: style.strokeWidthPx,
+                                         headScale: style.arrowHeadScale)
             ctx.saveGState()
             ctx.setStrokeColor(style.color.cgColor)
             ctx.setFillColor(style.color.cgColor)
@@ -141,11 +189,11 @@ struct ArrowGeometry {
     let shaftEnd: CGPoint     // pulled back so the filled head owns the tip
     let headPath: CGPath
 
-    init(start: CGPoint, end: CGPoint, strokeWidthPx: CGFloat) {
+    init(start: CGPoint, end: CGPoint, strokeWidthPx: CGFloat, headScale: CGFloat = 1) {
         let dx = end.x - start.x, dy = end.y - start.y
         let length = max(hypot(dx, dy), 0.001)
         let ux = dx / length, uy = dy / length
-        let headLength = min(max(strokeWidthPx * 4.5, 18), length * 0.6)
+        let headLength = min(max(strokeWidthPx * 4.5, 18) * max(headScale, 0.1), length * 0.9)
         let headHalfWidth = headLength * 0.45
         shaftStart = start
         shaftEnd = CGPoint(x: end.x - ux * headLength, y: end.y - uy * headLength)

@@ -10,11 +10,15 @@ enum ZoomMode: Equatable, Sendable {
     case actualSize   // 1 image pixel = 1 device pixel
 }
 
+/// UI-level selector for a redaction region's flavor (maps to `RedactionMode`).
+enum RedactionKind: Equatable, Hashable, Sendable { case gaussian, pixelate }
+
 enum Interaction: Equatable {
     case idle
     case drawing(draft: Annotation, anchor: CGPoint)
     case draggingAnnotation(id: UUID, lastPoint: CGPoint)
     case resizing(id: UUID, handle: Handle, original: Annotation)
+    case rotating(id: UUID, original: Annotation)
     case editingText(id: UUID)
     case croppingDrag(anchor: CGPoint, current: CGPoint)
     case croppingDraft(rect: CGRect)   // parked until Return applies it
@@ -33,26 +37,50 @@ enum Interaction: Equatable {
                 commitTextEdit()
             case .croppingDrag, .croppingDraft, .drawing:
                 interaction = .idle
-            case .idle, .draggingAnnotation, .resizing:
+            case .idle, .draggingAnnotation, .resizing, .rotating:
                 break
             }
         }
     }
     var interaction: Interaction = .idle
-    var selectedID: UUID?
+    var selectedID: UUID? {
+        didSet {
+            guard selectedID != oldValue else { return }
+            syncControlsFromSelection()
+        }
+    }
     var zoomMode: ZoomMode = .fit
     var draftText: String = ""
 
-    // Style presets are point-denominated in the UI, pixel-denominated in the model.
-    var strokeColor: RGBAColor = .red {
+    // Style presets are point-denominated in the UI, pixel-denominated in the
+    // model. Each doubles as the "next shape" default AND live-applies to the
+    // current selection (via applyStyleToSelection). `isSyncing` suppresses that
+    // apply while we copy values FROM a newly selected shape INTO these.
+    var strokeColor: RGBAColor = .red { didSet { applyStyleToSelection() } }
+    var strokeWidthPt: CGFloat = 3 { didSet { applyStyleToSelection() } }
+    var fontSizePt: CGFloat = 20 { didSet { applyStyleToSelection() } }
+
+    // Fill (rectangle / ellipse).
+    var fillEnabled: Bool = false { didSet { applyStyleToSelection() } }
+    var fillColor: RGBAColor = RGBAColor(r: 1, g: 1, b: 1, a: 0.25) {
         didSet { applyStyleToSelection() }
     }
-    var strokeWidthPt: CGFloat = 3 {
-        didSet { applyStyleToSelection() }
-    }
-    var fontSizePt: CGFloat = 20 {
-        didSet { applyStyleToSelection() }
-    }
+    var cornerRadiusPt: CGFloat = 0 { didSet { applyStyleToSelection() } }
+
+    // Arrow head size multiplier.
+    var arrowHeadScale: CGFloat = 1 { didSet { applyStyleToSelection() } }
+
+    // Redaction (blur / pixelate): `redactionMode` picks which intensity applies
+    // to a selected region and lets the inspector convert between the two.
+    var redactionMode: RedactionKind = .gaussian { didSet { applyStyleToSelection() } }
+    var blurRadiusPt: CGFloat = 8 { didSet { applyStyleToSelection() } }
+    var pixelateBlockPt: CGFloat = 12 { didSet { applyStyleToSelection() } }
+
+    /// Inspector panel visibility (toolbar toggle).
+    var showInspector: Bool = true
+
+    private var isSyncing = false
+    private var interactiveEditDepth = 0
 
     let blurCache = BlurPatchCache()
 
@@ -113,7 +141,7 @@ enum Interaction: Equatable {
         case .drawing, .croppingDrag:
             interaction = .idle
             return true
-        case .draggingAnnotation, .resizing:
+        case .draggingAnnotation, .resizing, .rotating:
             if let snapshot = preGestureSnapshot {
                 document = snapshot
             }
@@ -171,14 +199,29 @@ enum Interaction: Equatable {
             interaction = .idle
         }
 
-        switch tool {
-        case .select:
-            if let handle = selectedHandleHit(at: p, tolerance: handleTolerance),
-               let id = selectedID, let original = document.annotation(with: id) {
-                beginGesture()
-                interaction = .resizing(id: id, handle: handle, original: original)
+        // Direct manipulation of the CURRENTLY SELECTED shape works from any
+        // tool, so a shape you just drew is immediately movable/resizable
+        // without first switching to the Select tool. Only the selected shape
+        // is grabbable this way; clicking elsewhere still draws a new shape.
+        // (Crop has its own marquee and is excluded.)
+        if tool != .crop, let id = selectedID,
+           let selected = document.annotation(with: id) {
+            if let grab = beginHandleGesture(at: p, id: id, selected: selected,
+                                             tolerance: handleTolerance) {
+                interaction = grab
                 return
             }
+            if selected.hitTest(p, tolerance: tolerance) {
+                beginGesture()
+                interaction = .draggingAnnotation(id: id, lastPoint: p)
+                return
+            }
+        }
+
+        switch tool {
+        case .select:
+            // The selected shape (if any) was already handled above. Here we
+            // pick up a DIFFERENT shape under the cursor, or deselect.
             if let hit = document.topAnnotation(at: p, tolerance: tolerance) {
                 selectedID = hit.id
                 beginGesture()
@@ -268,6 +311,20 @@ enum Interaction: Equatable {
             }
             document.annotations[index] = original.resized(handle: handle, to: p)
 
+        case .rotating(let id, let original):
+            guard let index = document.index(of: id) else {
+                interaction = .idle
+                return
+            }
+            let center = original.rotationCenter
+            // The rotate handle sits straight up from center; align it to p.
+            var angle = atan2(p.y - center.y, p.x - center.x) + .pi / 2
+            if NSEvent.modifierFlags.contains(.shift) {
+                let step = CGFloat.pi / 12   // snap to 15°
+                angle = (angle / step).rounded() * step
+            }
+            document.annotations[index].rotation = angle
+
         case .croppingDrag(let anchor, _):
             interaction = .croppingDrag(anchor: anchor, current: p)
 
@@ -288,7 +345,7 @@ enum Interaction: Equatable {
             // but select the new annotation so it's immediately adjustable.
             selectedID = draft.id
 
-        case .draggingAnnotation, .resizing:
+        case .draggingAnnotation, .resizing, .rotating:
             endGesture()
             interaction = .idle
 
@@ -326,14 +383,17 @@ enum Interaction: Equatable {
         case .rectangle: return .rectangle(rect: zero)
         case .ellipse: return .ellipse(rect: zero)
         case .arrow: return .arrow(start: p, end: p)
-        case .blur: return .blur(rect: zero, mode: .gaussian(radiusPx: 8 * pixelsPerPoint))
-        case .pixelate: return .blur(rect: zero, mode: .pixelate(blockPx: 12 * pixelsPerPoint))
+        case .blur: return .blur(rect: zero, mode: .gaussian(radiusPx: blurRadiusPt * pixelsPerPoint))
+        case .pixelate: return .blur(rect: zero, mode: .pixelate(blockPx: pixelateBlockPt * pixelsPerPoint))
         default: return .rectangle(rect: zero)
         }
     }
 
     private var currentStyle: AnnotationStyle {
-        AnnotationStyle(color: strokeColor, strokeWidthPx: strokeWidthPx)
+        AnnotationStyle(color: strokeColor, strokeWidthPx: strokeWidthPx,
+                        filled: fillEnabled, fillColor: fillColor,
+                        cornerRadiusPx: cornerRadiusPt * pixelsPerPoint,
+                        arrowHeadScale: arrowHeadScale)
     }
 
     private func isCommittable(_ draft: Annotation, anchor: CGPoint, end: CGPoint) -> Bool {
@@ -359,9 +419,47 @@ enum Interaction: Equatable {
             .first { $0.position.distance(to: p) <= tolerance }?.handle
     }
 
+    /// If `p` is on one of the selected shape's handles, snapshot for undo and
+    /// return the interaction to enter. Returns nil when no handle is hit.
+    private func beginHandleGesture(at p: CGPoint, id: UUID, selected: Annotation,
+                                    tolerance: CGFloat) -> Interaction? {
+        guard let handle = selectedHandleHit(at: p, tolerance: tolerance) else { return nil }
+        beginGesture()
+        return handle == .rotate
+            ? .rotating(id: id, original: selected)
+            : .resizing(id: id, handle: handle, original: selected)
+    }
+
     // MARK: - Selection edits
 
+    /// Copy the selected shape's properties INTO the control state so the
+    /// toolbar/inspector reflect what's selected. Guarded by `isSyncing` so the
+    /// resulting `didSet`s don't write the values straight back.
+    private func syncControlsFromSelection() {
+        guard let id = selectedID, let a = document.annotation(with: id) else { return }
+        isSyncing = true
+        defer { isSyncing = false }
+        strokeColor = a.style.color
+        strokeWidthPt = a.style.strokeWidthPx / pixelsPerPoint
+        fillEnabled = a.style.filled
+        fillColor = a.style.fillColor
+        cornerRadiusPt = a.style.cornerRadiusPx / pixelsPerPoint
+        arrowHeadScale = a.style.arrowHeadScale
+        switch a.kind {
+        case .text(let payload):
+            fontSizePt = payload.fontSizePx / pixelsPerPoint
+        case .blur(_, let mode):
+            switch mode {
+            case .gaussian(let r): redactionMode = .gaussian; blurRadiusPt = r / pixelsPerPoint
+            case .pixelate(let b): redactionMode = .pixelate; pixelateBlockPt = b / pixelsPerPoint
+            }
+        default:
+            break
+        }
+    }
+
     private func applyStyleToSelection() {
+        guard !isSyncing else { return }
         guard let id = selectedID, let index = document.index(of: id) else { return }
         if case .editingText(let editingID) = interaction {
             // Mid-edit style change: the edit's own gesture snapshot covers it;
@@ -372,18 +470,126 @@ enum Interaction: Equatable {
             return
         }
         guard case .idle = interaction else { return }
-        beginGesture()
-        applyCurrentStyle(at: index)
-        endGesture()
+        if interactiveEditDepth > 0 {
+            // A slider drag holds the undo bracket; just mutate.
+            applyCurrentStyle(at: index)
+        } else {
+            beginGesture()
+            applyCurrentStyle(at: index)
+            endGesture()
+        }
     }
 
     private func applyCurrentStyle(at index: Int) {
-        document.annotations[index].style.color = strokeColor
-        document.annotations[index].style.strokeWidthPx = strokeWidthPx
-        if case .text(var payload) = document.annotations[index].kind {
+        var style = document.annotations[index].style
+        style.color = strokeColor
+        style.strokeWidthPx = strokeWidthPx
+        style.filled = fillEnabled
+        style.fillColor = fillColor
+        style.cornerRadiusPx = cornerRadiusPt * pixelsPerPoint
+        style.arrowHeadScale = arrowHeadScale
+        document.annotations[index].style = style
+        switch document.annotations[index].kind {
+        case .text(var payload):
             payload.fontSizePx = fontSizePt * pixelsPerPoint
             document.annotations[index].kind = .text(payload)
+        case .blur(let rect, _):
+            document.annotations[index].kind = .blur(rect: rect, mode: currentRedactionMode)
+        default:
+            break
         }
+    }
+
+    /// The `RedactionMode` implied by the current inspector selection.
+    private var currentRedactionMode: RedactionMode {
+        switch redactionMode {
+        case .gaussian: return .gaussian(radiusPx: blurRadiusPt * pixelsPerPoint)
+        case .pixelate: return .pixelate(blockPx: pixelateBlockPt * pixelsPerPoint)
+        }
+    }
+
+    // MARK: - Interactive edits (Inspector direct-manipulation controls)
+
+    /// Open a single undo bracket spanning a continuous edit (slider drag).
+    /// Style `didSet`s and `mutateSelected` mutate inside it without pushing
+    /// per-tick history; `endInteractiveEdit` pushes one entry.
+    func beginInteractiveEdit() {
+        guard case .idle = interaction else { return }
+        if interactiveEditDepth == 0 { beginGesture() }
+        interactiveEditDepth += 1
+    }
+
+    func endInteractiveEdit() {
+        guard interactiveEditDepth > 0 else { return }
+        interactiveEditDepth -= 1
+        if interactiveEditDepth == 0 { endGesture() }
+    }
+
+    /// Mutate the selected annotation in place. Wraps itself in a one-shot undo
+    /// gesture unless a `beginInteractiveEdit` bracket is already open.
+    func mutateSelected(_ body: (inout Annotation) -> Void) {
+        guard case .idle = interaction else { return }
+        guard let id = selectedID, let index = document.index(of: id) else { return }
+        let bracketed = interactiveEditDepth > 0
+        if !bracketed { beginGesture() }
+        body(&document.annotations[index])
+        if !bracketed { endGesture() }
+    }
+
+    // MARK: - Numeric geometry (Inspector)
+
+    /// Bounding rect of the selection in image pixels (nil if nothing selected).
+    var selectedFrame: CGRect? {
+        selectedID.flatMap { document.annotation(with: $0)?.bounds }
+    }
+
+    /// Set position/size numerically (image pixels). Rect-based kinds take the
+    /// new rect directly (preserving rotation); other kinds translate to the new
+    /// origin and ignore width/height. One undo entry per call.
+    func updateSelectedFrame(x: CGFloat? = nil, y: CGFloat? = nil,
+                             width: CGFloat? = nil, height: CGFloat? = nil) {
+        guard case .idle = interaction else { return }
+        guard let id = selectedID, let index = document.index(of: id) else { return }
+        let b = document.annotations[index].bounds
+        let nx = x ?? b.minX, ny = y ?? b.minY
+        let nw = max(width ?? b.width, 1), nh = max(height ?? b.height, 1)
+        let newRect = CGRect(x: nx, y: ny, width: nw, height: nh)
+        beginGesture()
+        switch document.annotations[index].kind {
+        case .rectangle:
+            document.annotations[index].kind = .rectangle(rect: newRect)
+        case .ellipse:
+            document.annotations[index].kind = .ellipse(rect: newRect)
+        case .blur(_, let mode):
+            document.annotations[index].kind = .blur(rect: newRect, mode: mode)
+        default:
+            document.annotations[index].translate(
+                by: CGPoint(x: nx - b.minX, y: ny - b.minY))
+        }
+        endGesture()
+    }
+
+    // MARK: - Z-order (Inspector)
+
+    func bringSelectionToFront() {
+        reorderSelection { arr, i in arr.append(arr.remove(at: i)) }
+    }
+    func sendSelectionToBack() {
+        reorderSelection { arr, i in arr.insert(arr.remove(at: i), at: 0) }
+    }
+    func bringSelectionForward() {
+        reorderSelection { arr, i in if i < arr.count - 1 { arr.swapAt(i, i + 1) } }
+    }
+    func sendSelectionBackward() {
+        reorderSelection { arr, i in if i > 0 { arr.swapAt(i, i - 1) } }
+    }
+
+    private func reorderSelection(_ move: (inout [Annotation], Int) -> Void) {
+        guard case .idle = interaction else { return }
+        guard let id = selectedID, let index = document.index(of: id) else { return }
+        beginGesture()
+        move(&document.annotations, index)
+        endGesture()
     }
 
     func deleteSelection() {
@@ -424,7 +630,7 @@ enum Interaction: Equatable {
         case .drawing, .croppingDrag, .croppingDraft:
             interaction = .idle
             return true
-        case .draggingAnnotation, .resizing:
+        case .draggingAnnotation, .resizing, .rotating:
             // Abort the drag: restore the pre-gesture state.
             if let snapshot = preGestureSnapshot {
                 document = snapshot

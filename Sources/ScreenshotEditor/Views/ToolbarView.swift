@@ -67,6 +67,17 @@ struct ToolbarView: View {
 
             zoomToggle
 
+            Button {
+                viewModel.showInspector.toggle()
+            } label: {
+                Image(systemName: "sidebar.right")
+            }
+            .help("Toggle the inspector panel")
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(viewModel.showInspector
+                          ? Color.accentColor.opacity(0.25) : .clear))
+
             Divider().frame(height: 22)
 
             Image(systemName: "hand.draw")

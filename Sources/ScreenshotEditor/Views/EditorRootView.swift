@@ -8,8 +8,14 @@ struct EditorRootView: View {
         VStack(spacing: 0) {
             ToolbarView(viewModel: viewModel)
             Divider()
-            EditorCanvasView(viewModel: viewModel)
-                .background(Color(nsColor: .underPageBackgroundColor))
+            HStack(spacing: 0) {
+                EditorCanvasView(viewModel: viewModel)
+                    .background(Color(nsColor: .underPageBackgroundColor))
+                if viewModel.showInspector {
+                    Divider()
+                    InspectorView(viewModel: viewModel)
+                }
+            }
         }
     }
 }

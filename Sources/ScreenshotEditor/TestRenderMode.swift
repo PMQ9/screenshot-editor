@@ -23,6 +23,9 @@ import UniformTypeIdentifiers
 ///   ],
 ///   "crop": [x,y,w,h]   // optional, applied after annotations are placed
 /// }
+/// Optional on any annotation: "rotation": <degrees>. Optional on rectangle/
+/// ellipse: "fill": [r,g,b,a] (enables fill) and "cornerRadius": <px>. Optional
+/// on arrow: "headScale": <multiplier>.
 enum TestRenderMode {
     static func run(arguments: [String]) -> Int32 {
         guard let flagIndex = arguments.firstIndex(of: "--test-render"),
@@ -86,8 +89,15 @@ enum TestRenderMode {
             guard let type = item["type"] as? String else {
                 throw ParseError.malformed("missing type")
             }
-            let style = AnnotationStyle(color: color(item["color"]),
+            var style = AnnotationStyle(color: color(item["color"]),
                                         strokeWidthPx: cg(item["width"], default: 6))
+            if let fill = item["fill"] as? [Double], fill.count == 4 {
+                style.filled = true
+                style.fillColor = RGBAColor(r: fill[0], g: fill[1], b: fill[2], a: fill[3])
+            }
+            style.cornerRadiusPx = cg(item["cornerRadius"], default: 0)
+            style.arrowHeadScale = cg(item["headScale"], default: 1)
+            let rotation = cg(item["rotation"], default: 0) * .pi / 180
             let kind: AnnotationKind
             switch type {
             case "rectangle": kind = .rectangle(rect: try rect(item["rect"]))
@@ -113,7 +123,7 @@ enum TestRenderMode {
             default:
                 throw ParseError.malformed("unknown type \(type)")
             }
-            return Annotation(kind: kind, style: style)
+            return Annotation(kind: kind, style: style, rotation: rotation)
         }
     }
 

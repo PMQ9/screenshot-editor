@@ -22,85 +22,180 @@ struct ToolbarView: View {
     ]
 
     var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 2) {
-                ForEach(Self.tools, id: \.tool) { entry in
-                    toolButton(entry.tool, symbol: entry.symbol, help: entry.help)
-                }
-            }
-
-            Divider().frame(height: 22)
-
-            HStack(spacing: 5) {
-                ForEach(Self.palette, id: \.self) { color in
-                    colorSwatch(color)
-                }
-            }
-
-            if viewModel.tool == .text || selectedIsText {
-                Divider().frame(height: 22)
-                fontSizePicker
-            } else {
-                Divider().frame(height: 22)
-                strokeWidthPicker
-            }
-
-            Spacer(minLength: 8)
-
-            Button {
-                viewModel.undo()
-            } label: {
-                Image(systemName: "arrow.uturn.backward")
-            }
-            .help("Undo (⌘Z)")
-            .disabled(!viewModel.canUndo)
-
-            Button {
-                viewModel.redo()
-            } label: {
-                Image(systemName: "arrow.uturn.forward")
-            }
-            .help("Redo (⇧⌘Z)")
-            .disabled(!viewModel.canRedo)
-
-            Divider().frame(height: 22)
-
-            zoomToggle
-
-            Button {
-                viewModel.showInspector.toggle()
-            } label: {
-                Image(systemName: "sidebar.right")
-            }
-            .help("Toggle the inspector panel")
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(viewModel.showInspector
-                          ? Color.accentColor.opacity(0.25) : .clear))
-
-            Divider().frame(height: 22)
-
-            Image(systemName: "hand.draw")
-                .help("Drag the annotated image into another app")
-                .onDrag {
-                    if let url = ImageExporter.writeTempPNG(viewModel) {
-                        return NSItemProvider(contentsOf: url) ?? NSItemProvider()
-                    }
-                    return NSItemProvider()
-                }
-
-            // No .keyboardShortcut here: ⌘C routes through the Edit menu and
-            // responder chain, so copy still works inside the text editor.
-            Button("Copy") {
-                ImageExporter.copyToClipboard(viewModel)
-            }
-            .help("Copy the annotated image to the clipboard (⌘C)")
+        // The left cluster (tools + palette + picker) is always shown; only the
+        // trailing action cluster collapses. ViewThatFits renders the richest row
+        // whose intrinsic width fits the window, so trailing controls fold into an
+        // overflow menu instead of clipping off the right edge when space is tight.
+        ViewThatFits(in: .horizontal) {
+            toolbarRow { fullRightCluster }
+            toolbarRow { compactRightCluster }
+            toolbarRow { overflowRightCluster }
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
     }
+
+    private func toolbarRow(@ViewBuilder rightCluster: () -> some View) -> some View {
+        HStack(spacing: 10) {
+            toolGroup
+
+            Divider().frame(height: 22)
+
+            paletteGroup
+
+            pickerSection
+
+            Spacer(minLength: 8)
+
+            rightCluster()
+        }
+    }
+
+    // MARK: - Left cluster (never collapses)
+
+    private var toolGroup: some View {
+        HStack(spacing: 2) {
+            ForEach(Self.tools, id: \.tool) { entry in
+                toolButton(entry.tool, symbol: entry.symbol, help: entry.help)
+            }
+        }
+    }
+
+    private var paletteGroup: some View {
+        HStack(spacing: 5) {
+            ForEach(Self.palette, id: \.self) { color in
+                colorSwatch(color)
+            }
+        }
+    }
+
+    @ViewBuilder private var pickerSection: some View {
+        if viewModel.tool == .text || selectedIsText {
+            Divider().frame(height: 22)
+            fontSizePicker
+        } else {
+            Divider().frame(height: 22)
+            strokeWidthPicker
+        }
+    }
+
+    // MARK: - Right cluster tiers
+
+    @ViewBuilder private var fullRightCluster: some View {
+        undoButton
+        redoButton
+
+        Divider().frame(height: 22)
+
+        zoomToggle
+        sidebarButton
+
+        Divider().frame(height: 22)
+
+        dragHandle
+
+        // No .keyboardShortcut here: ⌘C routes through the Edit menu and
+        // responder chain, so copy still works inside the text editor.
+        Button("Copy") {
+            ImageExporter.copyToClipboard(viewModel)
+        }
+        .help("Copy the annotated image to the clipboard (⌘C)")
+    }
+
+    @ViewBuilder private var compactRightCluster: some View {
+        undoButton
+        redoButton
+
+        Divider().frame(height: 22)
+
+        zoomToggle
+        sidebarButton
+        dragHandle
+        copyIconButton
+    }
+
+    @ViewBuilder private var overflowRightCluster: some View {
+        undoButton
+        redoButton
+        copyIconButton
+        overflowMenu
+    }
+
+    // MARK: - Right-cluster controls
+
+    private var undoButton: some View {
+        Button {
+            viewModel.undo()
+        } label: {
+            Image(systemName: "arrow.uturn.backward")
+        }
+        .help("Undo (⌘Z)")
+        .disabled(!viewModel.canUndo)
+    }
+
+    private var redoButton: some View {
+        Button {
+            viewModel.redo()
+        } label: {
+            Image(systemName: "arrow.uturn.forward")
+        }
+        .help("Redo (⇧⌘Z)")
+        .disabled(!viewModel.canRedo)
+    }
+
+    private var sidebarButton: some View {
+        Button {
+            viewModel.showInspector.toggle()
+        } label: {
+            Image(systemName: "sidebar.right")
+        }
+        .help("Toggle the inspector panel")
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(viewModel.showInspector
+                      ? Color.accentColor.opacity(0.25) : .clear))
+    }
+
+    private var dragHandle: some View {
+        Image(systemName: "hand.draw")
+            .help("Drag the annotated image into another app")
+            .onDrag {
+                if let url = ImageExporter.writeTempPNG(viewModel) {
+                    return NSItemProvider(contentsOf: url) ?? NSItemProvider()
+                }
+                return NSItemProvider()
+            }
+    }
+
+    private var copyIconButton: some View {
+        Button {
+            ImageExporter.copyToClipboard(viewModel)
+        } label: {
+            Image(systemName: "doc.on.doc")
+        }
+        .help("Copy the annotated image to the clipboard (⌘C)")
+    }
+
+    private var overflowMenu: some View {
+        Menu {
+            Button("Zoom to Fit") { viewModel.zoomMode = .fit }
+            Button("Actual Size (100%)") { viewModel.zoomMode = .actualSize }
+            Divider()
+            Button(viewModel.showInspector ? "Hide Inspector" : "Show Inspector") {
+                viewModel.showInspector.toggle()
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("More controls")
+    }
+
+    // MARK: - Helpers
 
     private var selectedIsText: Bool {
         guard let id = viewModel.selectedID,

@@ -128,14 +128,22 @@ struct EditorCanvasView: View {
         if viewModel.editingTextID != nil {
             return .ignored
         }
+        // Delete: match the raw scalar, not SwiftUI's `.delete`/`.deleteForward`
+        // constants. Empirically, pressing the Backspace key delivers a KeyPress
+        // whose `key.character` is U+007F (DEL) — and that does NOT compare equal
+        // to `KeyEquivalent.delete`, so a `case .delete` switch silently misses
+        // it. Forward-delete (fn+Backspace) arrives as U+F728.
+        if press.key.character == "\u{7F}"          // DEL — the Backspace key
+            || press.key.character == "\u{8}"       // BS — belt-and-suspenders
+            || press.key.character == "\u{F728}" {  // forward delete
+            viewModel.deleteSelection()
+            return .handled
+        }
         switch press.key {
         case .escape:
             return viewModel.handleEscape() ? .handled : .ignored
         case .return:
             viewModel.handleReturn()
-            return .handled
-        case .delete, .deleteForward:
-            viewModel.deleteSelection()
             return .handled
         case .upArrow:
             viewModel.nudgeSelection(dx: 0, dy: -1)

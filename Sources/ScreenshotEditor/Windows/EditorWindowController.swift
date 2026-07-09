@@ -96,6 +96,10 @@ final class EditorWindowController: NSWindowController, NSMenuItemValidation {
         case #selector(paste(_:)):
             return PasteboardReader.canReadImage()
         case #selector(delete(_:)):
+            // Don't hijack Backspace from an active text field: the canvas text-
+            // annotation editor, or the inspector's numeric geometry fields.
+            if viewModel.editingTextID != nil { return false }
+            if window?.firstResponder is NSText { return false }   // field editor
             return viewModel.selectedID != nil
         default:
             return true

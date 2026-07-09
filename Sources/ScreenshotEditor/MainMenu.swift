@@ -56,9 +56,11 @@ import AppKit
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)),
                          keyEquivalent: "a")
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Delete",
-                         action: #selector(EditorWindowController.delete(_:)),
-                         keyEquivalent: "")
+        let deleteItem = NSMenuItem(title: "Delete",
+                                    action: #selector(EditorWindowController.delete(_:)),
+                                    keyEquivalent: "\u{7F}")   // NSDeleteCharacter — the ⌫ key
+        deleteItem.keyEquivalentModifierMask = []              // bare Backspace, not ⌘⌫
+        editMenu.addItem(deleteItem)
         main.addItem(submenu: editMenu, title: "Edit")
 
         // View

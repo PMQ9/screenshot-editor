@@ -1,0 +1,15 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Assembled app bundle
+dist/
+
+# Generated test fixtures (recreated by scripts/make-fixture.swift)
+fixtures/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
